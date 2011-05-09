@@ -37,60 +37,61 @@ import org.powertac.common.enumerations.PowerType
  * to call it inside the constructor for some reason.</p>
  * @author John Collins
  */
-class Tariff 
+class Tariff
 {
   // ----------- State enumeration --------------
-  
+
   enum State
   {
     PENDING, OFFERED, ACTIVE, WITHDRAWN, KILLED, INACTIVE
   }
 
   def timeService
+  def tariffRateIndexService
 
   String specId
 
   /** The Tariff spec*/
   TariffSpecification tariffSpec
-  
+
   /** The broker behind this tariff */
   Broker broker
-  
+
   /** Last date new subscriptions will be accepted */
   Instant expiration
-  
+
   /** Current state of this Tariff */
   State state = State.PENDING
-  
+
   /** ID of Tariff that supersedes this Tariff */
   Tariff isSupersededBy
 
   /** Tracks the realized price for variable-rate tariffs. */
   Double totalCost = 0.0
   Double totalUsage = 0.0
-  
+
   /** Records the date when the Tariff was first offered */
   Instant offerDate
-  
+
   /** Maximum future interval over which price can be known */
   Duration maxHorizon // TODO lazy instantiation?
-  
+
   /** True if the maps are keyed by hour-in-week rather than hour-in-day */
   Boolean isWeekly = false
   Boolean analyzed = false
-  
+
   // map is an array, indexed by tier-threshold and hour-in-day/week
   def tiers = []
   def rateMap = []
 
   static transients = ["realizedPrice", "usageCharge", "expired", "revoked", "timeService",
-                       "covered", "minDuration", "powerType", "signupPayment", 
+                       "covered", "minDuration", "powerType", "signupPayment",
                        "earlyWithdrawPayment", "periodicPayment"]
-  
+
   static auditable = true
-  
+
   //static hasMany = [subscriptions:TariffSubscription]
-  
+
   static constraints = {
     specId(nullable: false, blank: false)
     broker(nullable:false)
@@ -99,14 +100,14 @@ class Tariff
     isSupersededBy(nullable: true)
     maxHorizon(nullable:true)
  }
-  
+
   //static mapping = {
   //  id (generator: 'assigned')
   //}
 
   /**
    * Initializes the Tariff, setting the publication date and running
-   * the internal analyzer to build the rate map.  
+   * the internal analyzer to build the rate map.
    */
   void init ()
   {
@@ -122,7 +123,7 @@ class Tariff
     broker.addToTariffs(this)
     broker.save()
   }
-  
+
   /**
    * Adds a new HourlyCharge to its Rate. Returns true just
    * in case the operation was successful.
@@ -141,39 +142,39 @@ class Tariff
     else
       return totalCost / totalUsage
   }
-  
+
   /** Pass-through for TariffSpecification.minDuration */
   long getMinDuration ()
   {
     tariffSpec.minDuration
   }
-  
+
   /** Type of power covered by this tariff */
   PowerType getPowerType ()
   {
     tariffSpec.powerType
   }
-  
+
   /** One-time payment for subscribing to tariff, positive for payment
    *  from customer, negative for payment to customer. */
   BigDecimal getSignupPayment ()
   {
     tariffSpec.signupPayment
   }
-  
+
   /** Payment from customer to broker for canceling subscription before
    *  minDuration has elapsed. */
   BigDecimal getEarlyWithdrawPayment ()
   {
     tariffSpec.earlyWithdrawPayment
   }
-  
+
   /** Flat payment per period for two-part tariffs */
   BigDecimal getPeriodicPayment ()
   {
     tariffSpec.periodicPayment
   }
-  
+
   /**
    * Adds periodic payments to the total cost, so realized price includes it.
    */
@@ -182,8 +183,8 @@ class Tariff
     totalCost += periodicPayment
   }
 
-  /** 
-   * Returns the usage charge for a single customer in the current timeslot. 
+  /**
+   * Returns the usage charge for a single customer in the current timeslot.
    * The kwh parameter
    * defaults to 1.0, in which case you get the per-kwh value. If you supply
    * the cumulativeUsage parameter, then the charge may be affected by the
@@ -202,12 +203,12 @@ class Tariff
     }
     return amt
   }
-  
-  /** 
-   * Returns the usage charge for a single customer using an amount of 
-   * energy at some time in 
-   * the past or future. If the requested time is farther in the future 
-   * than maxHorizon, then the result will may be a default value, which 
+
+  /**
+   * Returns the usage charge for a single customer using an amount of
+   * energy at some time in
+   * the past or future. If the requested time is farther in the future
+   * than maxHorizon, then the result will may be a default value, which
    * may not be useful. The cumulativeUsage parameter sets the base for
    * probing the rate tier structure. Do not use this method for billing,
    * because it does not update the realized-price data.
@@ -265,7 +266,7 @@ class Tariff
       return result
     }
   }
-  
+
   /**
    * True just in case the current time is past the expiration date
    * of this Tariff.
@@ -279,7 +280,7 @@ class Tariff
       return timeService.getCurrentTime().millis >= expiration.millis
     }
   }
-  
+
   /**
    * True just in case the set of Rates cover all the possible hour
    * and tier slots. If false, then there is some combination of hour
@@ -290,7 +291,7 @@ class Tariff
     for (tier in 0..<tiers.size()) {
       for (hour in 0..<(isWeekly? 24 * 7: 24)) {
         def cell = rateMap[tier][hour]
-        //println "cell: ${cell}" 
+        //println "cell: ${cell}"
         if (cell == null) {
           return false
         }
@@ -298,7 +299,7 @@ class Tariff
     }
     return true
   }
-  
+
   /**
    * True just in case this tariff has been revoked.
    */
@@ -318,7 +319,7 @@ class Tariff
    * </ol>
    * We sort the set of rates on these criteria, then populate an array of size
    * [number of tiers][number of hours] where number of hours is either 24 or
-   * 168 depending on whether there are any weekly constraints. 
+   * 168 depending on whether there are any weekly constraints.
    */
   void analyze ()
   {
@@ -333,14 +334,14 @@ class Tariff
     }
     tiers = tiers.sort()
     log.info "tiers: ${tiers}"
-    
+
     // Next, fill in the tierIndexMap, which maps tier thresholds to
     // array indices. Remember that there's always a 0.0 tier.
     int tidx = 0
     tiers.each { threshold ->
       tierIndexMap[(threshold)] = tidx++
     }
-    
+
     // Now we can compute the sort keys. Note that the lowest-priority
     // rates will sort first.
     def annotatedRates = [:] as TreeMap
@@ -419,5 +420,28 @@ class Tariff
       }
     }
     analyzed = true
+  }
+
+  def afterLoad() {
+    println "Tariff afterLoad - start"
+
+    rateMap = tariffRateIndexService.load(id)
+
+    println "Tariff afterLoad - end"
+  }
+
+  def afterInsert() {
+    println "Tariff afterInsert - start"
+    if (rateMap) {
+      println "Tariff afterInsert - got rateMap"
+      tariffRateIndexService.create(id, rateMap)
+    }
+    println "Tariff afterInsert - end"
+  }
+
+  def afterUpdate() {
+    println "Tariff afterUpdate - start"
+    afterInsert()
+    println "Tariff afterUpdate - end"
   }
 }
